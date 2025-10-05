@@ -6,3 +6,5 @@ services:
       - .env
     restart: unless-stopped
     container_name: instabot
+    volumes:
+      - ./sessions:/app/sessions:rw
