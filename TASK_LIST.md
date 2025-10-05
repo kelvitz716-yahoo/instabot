@@ -1,33 +1,32 @@
-# Project Task List (DRY Principle)
 
-## 1. Project Setup
-- Prepare directory structure
-- Set up Docker and Docker Compose
-- Create and configure `.env` file
+# Project Task List (DRY Principle, Modular & Incremental)
 
-## 2. Core Components Implementation
-- Implement Service Manager (dependency injection, lifecycle)
-- Build Command Router (command handling, error management)
-- Develop Base Service class and initialize services
+## 1. Minimal Working Telegram Bot
+- Create a simple Telegram bot that responds to `/start` with a welcome message.
 
-## 3. Bot Logic and Handlers
-- Implement Instagram download and Telegram upload services
-- Set up command handlers (`/start`, `/login`, `/session`, `/status`, `/help`)
-- Integrate session and database management
+## 2. Modularize Core Structure
+- Refactor bot into modules: main entry, command handlers, configuration.
 
-## 4. Rate Limiting and Resilience
-- Implement rate limiting for APIs
-- Add circuit breaker and smart backoff
+## 3. Add Instagram Download Stub
+- Add a placeholder function for Instagram content download (no real API yet).
 
-## 5. Security and Authentication
-- Integrate Telegram bot token and admin verification
-- Implement Instagram cookie management
+## 4. Integrate Download to Telegram
+- Accept Instagram URL, reply with stub "Downloaded" message.
 
-## 6. Monitoring and Health Checks
-- Add logging, metrics, and health checks
-- Monitor system resources and API status
+## 5. Add Environment Configuration
+- Move bot token/settings to `.env` file and load them.
 
-## 7. Testing and Deployment
-- Test features and error handling
-- Build and run with Docker Compose
-- Monitor logs and health status
+## 6. Add Error Handling and Logging
+- Centralize error handling and add basic logging.
+
+## 7. Expand with Real Instagram Download
+- Replace stub with real download logic (using a library or API).
+
+## 8. Add Rate Limiting and Health Check
+- Implement simple rate limiting and a `/health` command.
+
+## 9. Retain Backward Compatibility & Goal
+- Ensure each module builds on the previous, maintaining original goals and compatibility.
+
+## 10. Full Feature Integration (from original plan)
+- Implement Service Manager, Command Router, Base Service, session/database management, security, monitoring, and deployment as described in the original plan.
