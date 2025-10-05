@@ -6,15 +6,20 @@ from handlers.message import handle_message
 from handlers.message import handle_message
 
 def main():
-    app = ApplicationBuilder().token(get_bot_token()).build()
-    app.add_handler(CommandHandler("start", start))
-    # /download command removed; now only /start and message handler
+    from logger import get_logger
+    logger = get_logger("bot")
+    try:
+        app = ApplicationBuilder().token(get_bot_token()).build()
+        app.add_handler(CommandHandler("start", start))
+        # /download command removed; now only /start and message handler
 
-    # Handle all non-command messages
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        # Handle all non-command messages
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("Bot is running. Press Ctrl+C to stop.")
-    app.run_polling()
+        logger.info("Bot is running. Press Ctrl+C to stop.")
+        app.run_polling()
+    except Exception as e:
+        logger.exception("Fatal error in main loop")
 
 if __name__ == "__main__":
     main()
