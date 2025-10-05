@@ -1,10 +1,11 @@
 import re
+import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 from handlers.instagram import download_instagram_content
-from logger import get_logger
+from utils.constants import INSTAGRAM_URL_PATTERN
 
-INSTAGRAM_URL_PATTERN = re.compile(r"https?://(www\.)?instagram\.com/[\w\-./?=&%]+", re.IGNORECASE)
+logger = logging.getLogger(__name__)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger = get_logger("handlers.message")

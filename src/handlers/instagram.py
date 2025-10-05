@@ -1,27 +1,31 @@
 import re
 import os
+import logging
+from typing import Union
+from utils.constants import (
+    COOKIES_PATH, INSTAGRAM_URL_PATTERN,
+    MSG_INVALID_URL, MSG_NO_SESSION, MSG_NO_CONTENT,
+    MSG_DOWNLOAD_SUCCESS
+)
+from utils.file_handler import format_file_list
 from handlers.gallery_dl_utils import run_gallery_dl, check_gallery_dl
-from handlers.downloader import set_last_download, format_download_info
-from handlers.gallery_dl_debug import debug_gallery_dl
+logger = logging.getLogger(__name__)
+
 def download_instagram_content(url: str) -> str:
     """
-    Download Instagram content using gallery-dl, return path, count, and size info.
-    Returns detailed debug information for troubleshooting.
+    Download Instagram content using gallery-dl.
+    Returns a message describing the download result.
     """
-    import logging
-    logger = logging.getLogger(__name__)
-    
     try:
         # Verify URL format
-        if "instagram.com" not in url:
-            return "Error: Not a valid Instagram URL. Please provide a link from instagram.com"
+        if not re.match(INSTAGRAM_URL_PATTERN, url):
+            return MSG_INVALID_URL
             
         logger.info(f"Starting download for URL: {url}")
         
         # Check for required session file
-        session_path = "/app/sessions/cookies.txt"
-        if not os.path.exists(session_path):
-            return "Error: No active Instagram session. Please use /session_load to upload your cookies.txt first."
+        if not os.path.exists(COOKIES_PATH):
+            return MSG_NO_SESSION
             
         # Verify gallery-dl is working
         try:
@@ -30,19 +34,23 @@ def download_instagram_content(url: str) -> str:
             logger.error(f"gallery-dl check failed: {str(e)}")
             return f"System error: {str(e)}"
 
-        # Try the download with proper error handling
+        # Try the download
         try:
             logger.info("Starting gallery-dl download...")
             temp_dir, file_paths, captions, stats = run_gallery_dl(url)
             if not file_paths:
-                return "Error: No content was downloaded. The post might be private or deleted."
-
-            # Store the downloaded files for later sending
+                return MSG_NO_CONTENT
+                
+            # Store downloaded files and format message
+            from handlers.download import set_last_download
             set_last_download(file_paths)
             
-            # Format info about the downloaded files
-            message, _ = format_download_info(file_paths)
-            return message
+            files_list, total_size_mb = format_file_list(file_paths)
+            return MSG_DOWNLOAD_SUCCESS.format(
+                count=len(file_paths),
+                size=total_size_mb,
+                files=files_list
+            )
             
         except RuntimeError as e:
             logger.error(f"gallery-dl error for {url}: {str(e)}")
