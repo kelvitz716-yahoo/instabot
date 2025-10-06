@@ -1,4 +1,5 @@
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
+from telegram import Update
 from config import get_bot_token
 
 from handlers.start import start
@@ -7,49 +8,123 @@ from handlers.session import get_session_conversation_handler
 from handlers.download import get_download_handlers
 from handlers.report import get_report_handlers
 
-def main():
+async def setup_services():
+    """Initialize all services and perform recovery operations."""
+    from logger import setup_logging, get_logger
+    setup_logging()
+    logger = get_logger("bot")
+    
+    # Create necessary directories
+    from utils.constants import SESSIONS_DIR, DOWNLOADS_DIR, JOB_BASE_DIR
+    import os
+    os.makedirs(SESSIONS_DIR, exist_ok=True)
+    os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+    os.makedirs(JOB_BASE_DIR, exist_ok=True)
+    
+    # Initialize services
+    from utils.service_manager import service_manager
+    from utils.state_tracker import StateTracker
+    from utils.reporting import ReportingSystem
+    from utils.job_manager import JobManager
+    from utils.recovery import RecoverySystem
+    from utils.job_monitor import JobMonitor
+    from handlers.download import DownloadHandler
+    from handlers.upload import UploadHandler
+    
+    # Initialize core services
+    job_manager = JobManager()
+    state_tracker = StateTracker()
+    reporting_system = ReportingSystem()
+    recovery_system = RecoverySystem()
+    job_monitor = JobMonitor()
+    
+    # Initialize handlers
+    download_handler = DownloadHandler()
+    upload_handler = UploadHandler()
+    
+    # Check for and recover interrupted jobs
+    logger.info("Scanning for interrupted jobs...")
+    interrupted_jobs = recovery_system.scan_for_interrupted_jobs()
+    if interrupted_jobs:
+        logger.info(f"Found {len(interrupted_jobs)} interrupted jobs. Attempting recovery...")
+        for job in interrupted_jobs:
+            if recovery_system.resume_job(job):
+                logger.info(f"Successfully queued job {job.job_id} for recovery")
+            else:
+                logger.warning(f"Could not recover job {job.job_id}, marked as failed")
+    
+    # Return the job monitor for starting later
+    return job_monitor, logger
+
+def run():
+    """Run the bot with proper exception handling"""
+    import asyncio
     # Set up logging
     from logger import setup_logging, get_logger
     setup_logging()
     logger = get_logger("bot")
     
+    async def run_app():
+        """Run the Telegram bot application"""
+        app = ApplicationBuilder().token(get_bot_token()).build()
+        
+        # Register handlers in order of precedence
+        handlers = [
+            CommandHandler("start", start),
+            get_session_conversation_handler(),
+            *get_download_handlers(),
+            *get_report_handlers(),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+        ]
+        
+        for handler in handlers:
+            app.add_handler(handler)
+            
+        # Initialize the application
+        await app.initialize()
+        
+        # Start polling
+        await app.start()
+        await app.updater.start_polling()
+        
+        # Return app for cleanup
+        return app
+    
+    async def main():
+        """Main async function coordinating bot and job monitor"""
+        try:
+            # Initialize services
+            job_monitor, logger = await setup_services()
+            
+            # Start the bot application
+            app = await run_app()
+            
+            # Start job monitoring
+            monitor_task = asyncio.create_task(job_monitor.start_monitoring())
+            
+            logger.info("Bot is running with job monitoring. Press Ctrl+C to stop.")
+            
+            # Keep the main task running until interrupted
+            try:
+                while True:
+                    await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                # Handle shutdown
+                await app.stop()
+                await app.updater.stop()
+                monitor_task.cancel()
+                try:
+                    await monitor_task
+                except asyncio.CancelledError:
+                    pass
+            
+        except Exception as e:
+            logger.exception("Fatal error in main loop")
+            raise
+    
+    # Run the async main function
     try:
-        # Create necessary directories
-        from utils.constants import SESSIONS_DIR, DOWNLOADS_DIR, JOB_BASE_DIR
-        import os
-        os.makedirs(SESSIONS_DIR, exist_ok=True)
-        os.makedirs(DOWNLOADS_DIR, exist_ok=True)
-        os.makedirs(JOB_BASE_DIR, exist_ok=True)
-        
-        # Initialize services
-        from utils.service_manager import service_manager
-        from utils.state_tracker import StateTracker
-        from utils.reporting import ReportingSystem
-        from utils.job_manager import JobManager
-        from utils.recovery import RecoverySystem
-        from handlers.download import DownloadHandler
-        from handlers.upload import UploadHandler
-        
-        # Initialize core services
-        job_manager = JobManager()
-        state_tracker = StateTracker()
-        reporting_system = ReportingSystem()
-        recovery_system = RecoverySystem()
-        
-        # Initialize handlers
-        download_handler = DownloadHandler()
-        upload_handler = UploadHandler()
-        
-        # Check for and recover interrupted jobs
-        logger.info("Scanning for interrupted jobs...")
-        interrupted_jobs = recovery_system.scan_for_interrupted_jobs()
-        if interrupted_jobs:
-            logger.info(f"Found {len(interrupted_jobs)} interrupted jobs. Attempting recovery...")
-            for job in interrupted_jobs:
-                if recovery_system.resume_job(job):
-                    logger.info(f"Successfully queued job {job.job_id} for recovery")
-                else:
-                    logger.warning(f"Could not recover job {job.job_id}, marked as failed")
+        asyncio.run(main())
         
         # Initialize bot application
         app = ApplicationBuilder().token(get_bot_token()).build()
@@ -73,4 +148,4 @@ def main():
         logger.exception("Fatal error in main loop")
 
 if __name__ == "__main__":
-    main()
+    run()

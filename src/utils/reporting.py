@@ -22,6 +22,12 @@ class ReportingSystem:
         self.state_tracker = state_tracker or service_manager.get(StateTracker)
         service_manager.register(ReportingSystem, self)
         
+    async def report_job_stuck(self, job_id: str, duration: int) -> None:
+        """Report a job as stuck"""
+        message = f"⚠️ Job {job_id} appears to be stuck (no progress for {duration} seconds)"
+        logger.warning(message)
+        # Add any notification mechanisms here (e.g., Telegram messages)
+        
     def get_active_jobs_report(self) -> Dict[str, Any]:
         """Get a summary of all currently active jobs"""
         active_jobs = []
