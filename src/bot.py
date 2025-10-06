@@ -60,13 +60,9 @@ async def setup_services():
 def run():
     """Run the bot with proper exception handling"""
     import asyncio
-    # Set up logging
-    from logger import setup_logging, get_logger
-    setup_logging()
-    logger = get_logger("bot")
+    from logger import get_logger
     
-    async def main(logger):
-        """Main async function coordinating bot and job monitor"""
+    logger = get_logger("bot")
     
     async def run_app():
         """Run the Telegram bot application"""
@@ -98,8 +94,8 @@ def run():
     async def main():
         """Main async function coordinating bot and job monitor"""
         try:
-            # Initialize services
-            job_monitor, logger = await setup_services()
+            # Initialize services - use job_monitor but ignore logger since we already have one
+            job_monitor, _ = await setup_services()
             
             # Start the bot application
             app = await run_app()
@@ -130,27 +126,9 @@ def run():
     # Run the async main function
     try:
         asyncio.run(main())
-        
-        # Initialize bot application
-        app = ApplicationBuilder().token(get_bot_token()).build()
-        
-        # Register handlers in order of precedence
-        handlers = [
-            CommandHandler("start", start),
-            get_session_conversation_handler(),
-            *get_download_handlers(),  # Unpack download handlers
-            *get_report_handlers(),  # Unpack reporting handlers
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
-        ]
-        
-        for handler in handlers:
-            app.add_handler(handler)
-            
-        logger.info("Bot is running. Press Ctrl+C to stop.")
-        app.run_polling()
-        
     except Exception as e:
         logger.exception("Fatal error in main loop")
+        raise
 
 if __name__ == "__main__":
     run()
