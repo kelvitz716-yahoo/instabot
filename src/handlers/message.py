@@ -4,12 +4,13 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from utils.constants import INSTAGRAM_URL_PATTERN
 from handlers.download import DownloadHandler
+from utils.service_manager import service_manager
 from logger import get_logger
 
 logger = get_logger(__name__)
 
-# Initialize handler at module level
-download_handler = DownloadHandler()
+# Get handler from service manager
+download_handler = service_manager.get(DownloadHandler)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:

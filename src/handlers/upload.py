@@ -12,8 +12,10 @@ from telegram.constants import MessageLimit
 from telegram.error import RetryAfter, TimedOut
 
 from utils.state_tracker import StateTracker
+from utils.service_manager import service_manager
 from utils.constants import JOB_BASE_DIR, MAX_UPLOAD_RETRIES
 from utils.telegram_helper import split_large_message
+from utils.service_manager import service_manager
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +23,10 @@ class UploadHandler:
     """
     Handles media file uploads to Telegram with state tracking and retry logic.
     """
-    def __init__(self, state_tracker: StateTracker):
-        self.state_tracker = state_tracker
+    def __init__(self, state_tracker: Optional[StateTracker] = None):
+        self.state_tracker = state_tracker or service_manager.get(StateTracker)
         self.upload_semaphore = asyncio.Semaphore(2)  # Limit concurrent uploads
+        service_manager.register(UploadHandler, self)
         
     async def upload_files(
         self,

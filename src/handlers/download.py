@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 from typing import Optional, List
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler
@@ -10,19 +11,23 @@ from utils.constants import (
 )
 from utils.telegram_helper import reply_with_error
 from utils.state_tracker import StateTracker
+from utils.service_manager import service_manager
 from handlers.upload import UploadHandler
 from utils.instagram_validator import is_valid_instagram_url
 from handlers.gallery_dl_utils import download_instagram_post
+from utils.service_manager import service_manager
 
 logger = logging.getLogger(__name__)
 
 class DownloadHandler:
     """
-    Handles media downloads with state tracking and upload coordination.
+    Handles downloading media from Instagram with state tracking and retry logic.
     """
-    def __init__(self):
-        self.state_tracker = StateTracker()
-        self.upload_handler = UploadHandler(self.state_tracker)
+    def __init__(self, state_tracker: Optional[StateTracker] = None, upload_handler: Optional[UploadHandler] = None):
+        self.state_tracker = state_tracker or service_manager.get(StateTracker)
+        self.upload_handler = upload_handler or service_manager.get(UploadHandler)
+        self.download_semaphore = asyncio.Semaphore(2)  # Limit concurrent downloads
+        service_manager.register(DownloadHandler, self)
         
     async def handle_download(
         self,

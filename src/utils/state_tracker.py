@@ -9,6 +9,7 @@ from datetime import datetime
 from utils.job_manager import JobManager, JobState, JobStatus, FileState, FileStatus
 from utils.file_naming import generate_filename
 from utils.constants import JOB_BASE_DIR
+from utils.service_manager import service_manager
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +18,9 @@ class StateTracker:
     Handles state management and coordination between download and upload processes.
     Ensures consistent state tracking and provides recovery mechanisms.
     """
-    def __init__(self):
-        self.job_manager = JobManager(JOB_BASE_DIR)
+    def __init__(self, job_manager: Optional[JobManager] = None):
+        self.job_manager = job_manager or service_manager.get(JobManager)
+        service_manager.register(StateTracker, self)
         
     def initialize_download_job(self, url: str, expected_count: int = 0) -> str:
         """
