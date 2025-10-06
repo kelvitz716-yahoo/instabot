@@ -26,7 +26,47 @@ class ReportingSystem:
         """Report a job as stuck"""
         message = f"⚠️ Job {job_id} appears to be stuck (no progress for {duration} seconds)"
         logger.warning(message)
-        # Add any notification mechanisms here (e.g., Telegram messages)
+        await self._send_notification(message)
+        
+    async def report_recovery_event(self, event_type: str, job_id: str, details: Optional[str] = None) -> None:
+        """Report a recovery-related event through appropriate channels"""
+        if event_type == "start":
+            message = f"🔄 Starting recovery for job {job_id}"
+        elif event_type == "success":
+            message = f"✅ Successfully recovered job {job_id}"
+        elif event_type == "failure":
+            message = f"❌ Failed to recover job {job_id}"
+            if details:
+                message += f"\nError: {details}"
+        else:
+            message = f"ℹ️ Recovery event for job {job_id}: {event_type}"
+            if details:
+                message += f"\n{details}"
+        
+        logger.info(message)
+        await self._send_notification(message)
+        
+    async def _send_notification(self, message: str) -> None:
+        """Send a notification through configured channels"""
+        from telegram.error import TelegramError
+        try:
+            await self._send_telegram_notification(message)
+        except TelegramError as e:
+            logger.error(f"Failed to send Telegram notification: {str(e)}")
+            
+    async def _send_telegram_notification(self, message: str) -> None:
+        """Send a notification through Telegram"""
+        from telegram import Bot
+        from config import get_bot_token, get_admin_chat_id
+        
+        bot = Bot(token=get_bot_token())
+        chat_id = get_admin_chat_id()
+        if chat_id:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=message,
+                parse_mode='HTML'
+            )
         
     def get_active_jobs_report(self) -> Dict[str, Any]:
         """Get a summary of all currently active jobs"""

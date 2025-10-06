@@ -22,39 +22,39 @@ async def setup_services():
     os.makedirs(JOB_BASE_DIR, exist_ok=True)
     
     # Initialize services
-    from utils.service_manager import service_manager
-    from utils.state_tracker import StateTracker
-    from utils.reporting import ReportingSystem
-    from utils.job_manager import JobManager
-    from utils.recovery import RecoverySystem
+    from utils.service_init import initialize_services
     from utils.job_monitor import JobMonitor
     from handlers.download import DownloadHandler
     from handlers.upload import UploadHandler
     
-    # Initialize core services
-    job_manager = JobManager()
-    state_tracker = StateTracker()
-    reporting_system = ReportingSystem()
-    recovery_system = RecoverySystem()
-    job_monitor = JobMonitor()
-    
-    # Initialize handlers
-    download_handler = DownloadHandler()
-    upload_handler = UploadHandler()
-    
-    # Check for and recover interrupted jobs
-    logger.info("Scanning for interrupted jobs...")
-    interrupted_jobs = recovery_system.scan_for_interrupted_jobs()
-    if interrupted_jobs:
-        logger.info(f"Found {len(interrupted_jobs)} interrupted jobs. Attempting recovery...")
-        for job in interrupted_jobs:
-            if recovery_system.resume_job(job):
-                logger.info(f"Successfully queued job {job.job_id} for recovery")
-            else:
-                logger.warning(f"Could not recover job {job.job_id}, marked as failed")
-    
-    # Return the job monitor for starting later
-    return job_monitor, logger
+    try:
+        # Initialize core services in proper order
+        logger.info("Initializing services...")
+        services = initialize_services()
+        job_manager = services['job_manager']
+        job_monitor = JobMonitor()
+        
+        # Initialize handlers
+        download_handler = DownloadHandler()
+        upload_handler = UploadHandler()
+        
+        # Check for and recover interrupted jobs
+        logger.info("Scanning for interrupted jobs...")
+        interrupted_jobs = await services['recovery_system'].scan_for_interrupted_jobs()
+        if interrupted_jobs:
+            logger.info(f"Found {len(interrupted_jobs)} interrupted jobs. Attempting recovery...")
+            for job_state in interrupted_jobs:
+                if await services['recovery_system'].resume_job(job_state):
+                    logger.info(f"Successfully recovered job {job_state.job_id}")
+                else:
+                    logger.error(f"Failed to recover job {job_state.job_id}")
+        
+        # Return the job monitor for starting later
+        return job_monitor, logger
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize services: {str(e)}")
+        raise
 
 def run():
     """Run the bot with proper exception handling"""
@@ -63,6 +63,9 @@ def run():
     from logger import setup_logging, get_logger
     setup_logging()
     logger = get_logger("bot")
+    
+    async def main(logger):
+        """Main async function coordinating bot and job monitor"""
     
     async def run_app():
         """Run the Telegram bot application"""

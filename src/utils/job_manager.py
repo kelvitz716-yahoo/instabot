@@ -8,6 +8,10 @@ from datetime import datetime
 from typing import Dict, List, Optional, TypedDict, Any
 from dataclasses import dataclass, asdict
 from enum import Enum
+import logging
+from .constants import JOB_BASE_DIR
+
+logger = logging.getLogger(__name__)
 
 from .service_manager import service_manager
 
@@ -46,6 +50,7 @@ class FileState:
     upload_time: Optional[float] = None
     retries: int = 0
     error: Optional[str] = None
+    file_size: int = 0  # Track file size for progress monitoring
 
 @dataclass
 class JobState:
@@ -57,6 +62,7 @@ class JobState:
     expected_files: int = 0
     end_time: Optional[float] = None
     error: Optional[str] = None
+    last_heartbeat: Optional[float] = None  # Track last activity time
 
 class EnumJSONEncoder(json.JSONEncoder):
     """Custom JSON encoder that handles our enum types"""
@@ -69,16 +75,74 @@ class EnumJSONEncoder(json.JSONEncoder):
             return asdict(obj)
         return super().default(obj)
 
+from utils.heartbeat import HeartbeatTracker
+
 class JobManager:
-    def __init__(self, base_path: str = "/app/jobs"):
-        self.base_path = base_path
-        self.json_encoder = EnumJSONEncoder
-        self._ensure_directories()
+    """Manages the lifecycle of download and upload jobs."""
+    
+    def __init__(self):
+        """Initialize the job manager."""
+        self._active_jobs = {}
+        self.base_path = JOB_BASE_DIR
+        self._heartbeat_tracker = HeartbeatTracker()
+        self._recovery_system = None
         service_manager.register(JobManager, self)
         
+    def initialize_recovery(self, recovery_system=None):
+        """Initialize the recovery system after JobManager is registered."""
+        if not self._recovery_system:
+            from .recovery import RecoverySystem
+            self._recovery_system = recovery_system or RecoverySystem(job_manager=self)
+
+    def get_recovery_system(self):
+        """Get the recovery system, initializing it if needed."""
+        if not self._recovery_system:
+            self.initialize_recovery()
+        return self._recovery_system
+
     def _ensure_directories(self) -> None:
         """Create the base job directory if it doesn't exist"""
         os.makedirs(self.base_path, exist_ok=True)
+        
+    def get_stalled_jobs(self, timeout_seconds: int = 300) -> List[str]:
+        """
+        Get a list of job IDs that have been stalled (no heartbeat updates) for longer than the timeout
+        
+        Args:
+            timeout_seconds: Number of seconds after which a job is considered stalled
+            
+        Returns:
+            List of job IDs that are stalled
+        """
+        return self._heartbeat_tracker.get_stalled_jobs(timeout_seconds)
+        
+    def scan_for_recoverable_jobs(self) -> List[JobState]:
+        """
+        Scan for jobs that can be recovered after a crash or interruption.
+        Returns a list of recoverable job states.
+        """
+        return self._recovery_system.scan_for_interrupted_jobs()
+
+    def attempt_job_recovery(self, job_state: JobState) -> bool:
+        """
+        Attempt to recover an interrupted or failed job.
+        
+        Args:
+            job_state: The state of the job to recover
+            
+        Returns:
+            bool: True if recovery was successful, False otherwise
+        """
+        try:
+            # Log recovery attempt
+            logger.info(f"Attempting to recover job {job_state.job_id}")
+            
+            # Use recovery system to handle the recovery
+            return self._recovery_system.resume_job(job_state)
+            
+        except Exception as e:
+            logger.error(f"Failed to recover job {job_state.job_id}: {str(e)}")
+            return False
         
     def create_job(self, source_url: str) -> str:
         """Create a new job and return its ID"""
@@ -148,6 +212,35 @@ class JobManager:
         job_path = os.path.join(self.base_path, job_id)
         return self._load_job_state(job_path)
         
+    def get_stalled_jobs(self, timeout_seconds: int = 300) -> List[str]:
+        """
+        Get a list of job IDs that have been stalled (no heartbeat updates) for longer than the timeout
+        
+        Args:
+            timeout_seconds: Number of seconds after which a job is considered stalled
+            
+        Returns:
+            List of job IDs that are stalled
+        """
+        return self._heartbeat_tracker.get_stalled_jobs(timeout_seconds)
+        
+    def update_job_heartbeat(
+        self,
+        job_id: str,
+        files_processed: int,
+        total_files: int,
+        current_operation: str,
+        bytes_processed: int = 0
+    ) -> None:
+        """Update the heartbeat information for a job"""
+        self._heartbeat_tracker.update_heartbeat(
+            job_id=job_id,
+            files_processed=files_processed,
+            total_files=total_files,
+            current_operation=current_operation,
+            bytes_processed=bytes_processed
+        )
+        
     def update_job_state(self, job_id: str, 
                         status: Optional[JobStatus] = None,
                         error: Optional[str] = None,
@@ -190,10 +283,20 @@ class JobManager:
         
     def update_file_state(self, job_id: str, filename: str,
                          status: Optional[FileStatus] = None,
+                         bytes_processed: int = 0,
                          **kwargs) -> None:
         """Update the state of a specific file in a job"""
         job_path = os.path.join(self.base_path, job_id)
         state = self._load_job_state(job_path)
+        
+        # Update heartbeat with progress
+        self._heartbeat_tracker.update_heartbeat(
+            job_id=job_id,
+            files_processed=sum(1 for f in state.files.values() if f.status in [FileStatus.UPLOADED, FileStatus.FAILED]),
+            total_files=len(state.files),
+            current_operation=f"Processing {filename}",
+            bytes_processed=bytes_processed
+        )
         
         if not state or filename not in state.files:
             raise ValueError(f"File {filename} not found in job {job_id}")

@@ -22,6 +22,23 @@ class StateTracker:
         self.job_manager = job_manager or service_manager.get(JobManager)
         service_manager.register(StateTracker, self)
         
+    def update_job_heartbeat(
+        self,
+        job_id: str,
+        files_processed: int,
+        total_files: int,
+        current_operation: str,
+        bytes_processed: int = 0
+    ) -> None:
+        """Update job heartbeat with current progress information"""
+        self.job_manager.update_job_heartbeat(
+            job_id,
+            files_processed,
+            total_files,
+            current_operation,
+            bytes_processed
+        )
+    
     def initialize_download_job(self, url: str, expected_count: int = 0) -> str:
         """
         Initialize a new download job for a given URL.
@@ -40,7 +57,7 @@ class StateTracker:
             logger.error(f"Failed to initialize download job for {url}: {str(e)}")
             raise
             
-    def record_download(self, job_id: str, filename: str, original_url: str) -> None:
+    def record_download(self, job_id: str, filename: str, original_url: str, file_size: int = 0) -> None:
         """Record a successful file download in the job state"""
         try:
             self.job_manager.add_file_to_job(job_id, filename, original_url)
@@ -48,6 +65,7 @@ class StateTracker:
                 job_id,
                 filename,
                 status=FileStatus.DOWNLOADED,
+                file_size=file_size,
                 download_time=datetime.now().timestamp()
             )
             logger.debug(f"Recorded download for {filename} in job {job_id}")

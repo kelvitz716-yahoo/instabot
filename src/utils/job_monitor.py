@@ -69,13 +69,14 @@ class JobMonitor:
             logger.debug(f"Updated progress for job {job_id}")
 
     async def _monitor_loop(self) -> None:
-        """Main monitoring loop that checks for stuck jobs."""
+        """Main monitoring loop that checks for stuck jobs and stalled progress."""
         while True:
             try:
-                current_time = time.time()
+                # Get jobs that are stuck (no state changes)
                 stuck_jobs = []
+                current_time = time.time()
 
-                # Check all monitored jobs
+                # Check all monitored jobs for stuck state
                 for job_id in list(self.monitored_jobs):
                     last_progress = self.active_jobs.get(job_id)
                     if last_progress is None:
@@ -87,10 +88,20 @@ class JobMonitor:
                     if job_state and time_since_progress > self.progress_threshold:
                         if job_state.status in [JobStatus.DOWNLOADING, JobStatus.UPLOADING]:
                             stuck_jobs.append((job_id, job_state))
-
-                # Handle stuck jobs
+                            
+                # Get jobs that have stalled progress (no heartbeat updates)
+                stalled_jobs = self.job_manager.get_stalled_jobs()
+                
+                # Handle stuck and stalled jobs
                 for job_id, job_state in stuck_jobs:
                     await self._handle_stuck_job(job_id, job_state)
+                    
+                # Handle stalled jobs
+                for job_id in stalled_jobs:
+                    if job_id not in [j[0] for j in stuck_jobs]:  # Don't handle twice
+                        job_state = self.job_manager.get_job_state(job_id)
+                        if job_state:
+                            await self._handle_stuck_job(job_id, job_state)
 
                 await asyncio.sleep(60)  # Check every minute
 

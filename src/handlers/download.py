@@ -72,8 +72,27 @@ class DownloadHandler:
                 return
                 
             # Record downloads in state tracker
+            total_files = len(downloaded_files)
+            processed_files = 0
+            total_bytes = 0
+            
             for filename in downloaded_files:
-                self.state_tracker.record_download(job_id, filename, url)
+                file_path = os.path.join(download_path, filename)
+                file_size = os.path.getsize(file_path)
+                total_bytes += file_size
+                processed_files += 1
+                
+                # Record download with size info
+                self.state_tracker.record_download(job_id, filename, url, file_size)
+                
+                # Update progress
+                self.state_tracker.update_job_heartbeat(
+                    job_id,
+                    files_processed=processed_files,
+                    total_files=total_files,
+                    current_operation=f"Downloading {filename}",
+                    bytes_processed=total_bytes
+                )
                 
             await status_message.edit_text(
                 f"✅ Download completed: {len(downloaded_files)} files\n"
