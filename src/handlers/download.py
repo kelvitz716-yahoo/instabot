@@ -1,73 +1,109 @@
 import os
 import logging
-from typing import List
+from typing import Optional, List
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler
 from utils.constants import (
     MAX_TELEGRAM_FILE_SIZE, MSG_NO_DOWNLOADS,
     MSG_SENDING_FILES, MSG_FILE_TOO_LARGE,
-    MSG_NO_URL
+    MSG_NO_URL, JOB_BASE_DIR
 )
-from utils.telegram_helper import reply_with_error, send_file
-from handlers.instagram import download_instagram_content
+from utils.telegram_helper import reply_with_error
+from utils.state_tracker import StateTracker
+from handlers.upload import UploadHandler
+from utils.instagram_validator import is_valid_instagram_url
+from handlers.gallery_dl_utils import download_instagram_post
 
 logger = logging.getLogger(__name__)
 
-async def send_files(update: Update, context: ContextTypes.DEFAULT_TYPE, file_paths: List[str]) -> None:
-    """Send files to user with progress updates"""
-    if not file_paths:
-        return
+class DownloadHandler:
+    """
+    Handles media downloads with state tracking and upload coordination.
+    """
+    def __init__(self):
+        self.state_tracker = StateTracker()
+        self.upload_handler = UploadHandler(self.state_tracker)
         
-    await update.message.reply_text(MSG_SENDING_FILES)
-    
-    for i, filepath in enumerate(file_paths, 1):
-        if not os.path.exists(filepath):
-            logger.error(f"File not found: {filepath}")
-            continue
-            
+    async def handle_download(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        url: Optional[str] = None,
+        reply_to_message_id: Optional[int] = None
+    ) -> None:
+        """
+        Handle download request with state tracking and automatic upload.
+        """
         try:
-            size_mb = os.path.getsize(filepath) / 1024 / 1024
-            if size_mb > MAX_TELEGRAM_FILE_SIZE / 1024 / 1024:
-                await reply_with_error(
-                    update, context,
-                    MSG_FILE_TOO_LARGE.format(
-                        filename=os.path.basename(filepath),
-                        size=size_mb
-                    )
+            if not url and context.args:
+                url = context.args[0]
+            
+            if not url:
+                await reply_with_error(update, context, MSG_NO_URL)
+                return
+                
+            if not is_valid_instagram_url(url):
+                await update.message.reply_text(
+                    "❌ Invalid Instagram URL. Please provide a valid Instagram post URL."
                 )
-            else:
-                # Add progress information
-                progress = f"Sending file {i}/{len(file_paths)}"
-                await send_file(
-                    update, context,
-                    filepath,
-                    caption=f"{progress}\nSize: {size_mb:.1f}MB"
-                )
-        except Exception as e:
-            logger.exception(f"Error sending file {filepath}")
-            await reply_with_error(
-                update, context,
-                f"Error sending {os.path.basename(filepath)}: {str(e)}"
+                return
+                
+            # Initialize download job
+            job_id = self.state_tracker.initialize_download_job(url)
+            status_message = await update.message.reply_text(
+                f"⏳ Starting download for job {job_id}..."
             )
-    
-    await update.message.reply_text("All files have been sent!")
-
-async def handle_download(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /download command"""
-    if not context.args:
-        await reply_with_error(update, context, MSG_NO_URL)
-        return
-    
-    url = context.args[0]
-    await update.message.reply_text("Starting download, please wait...")
-    result, file_paths = await download_instagram_content(url)
-    await update.message.reply_text(result)
-    
-    if file_paths:  # If we have files, send them immediately
-        await send_files(update, context, file_paths)
+            
+            # Start download process
+            download_path = os.path.join(JOB_BASE_DIR, job_id)
+            os.makedirs(download_path, exist_ok=True)
+            
+            # Download files
+            downloaded_files = await download_instagram_post(url, download_path)
+            
+            if not downloaded_files:
+                await status_message.edit_text("❌ No files were downloaded.")
+                self.state_tracker.finalize_job(job_id)
+                return
+                
+            # Record downloads in state tracker
+            for filename in downloaded_files:
+                self.state_tracker.record_download(job_id, filename, url)
+                
+            await status_message.edit_text(
+                f"✅ Download completed: {len(downloaded_files)} files\n"
+                "Starting upload process..."
+            )
+            
+            # Start upload process
+            successful, failed = await self.upload_handler.upload_files(
+                update, context, job_id, reply_to_message_id
+            )
+            
+            if successful + failed > 0:
+                await self.upload_handler.get_upload_status(
+                    update, context, job_id
+                )
+                
+        except Exception as e:
+            error_msg = f"Error processing download: {str(e)}"
+            logger.error(error_msg)
+            await update.message.reply_text(f"❌ {error_msg}")
+            
+    async def get_status(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        job_id: str
+    ) -> None:
+        """Get status of a specific job"""
+        await self.upload_handler.get_upload_status(
+            update, context, job_id
+        )
 
 def get_download_handlers():
     """Get all download-related command handlers"""
+    download_handler = DownloadHandler()
     return [
-        CommandHandler("download", handle_download)
+        CommandHandler("download", download_handler.handle_download)
     ]

@@ -13,6 +13,13 @@ def main():
     logger = get_logger("bot")
     
     try:
+        # Create necessary directories
+        from utils.constants import SESSIONS_DIR, DOWNLOADS_DIR, JOB_BASE_DIR
+        import os
+        os.makedirs(SESSIONS_DIR, exist_ok=True)
+        os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+        os.makedirs(JOB_BASE_DIR, exist_ok=True)
+        
         # Initialize bot application
         app = ApplicationBuilder().token(get_bot_token()).build()
         

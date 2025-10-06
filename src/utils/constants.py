@@ -3,7 +3,10 @@
 import os
 
 # File paths
-SESSIONS_DIR = "/app/sessions"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
+DOWNLOADS_DIR = os.path.join(BASE_DIR, "downloads")
+JOB_BASE_DIR = os.path.join(DOWNLOADS_DIR, "jobs")
 COOKIES_FILENAME = "cookies.txt"
 COOKIES_PATH = os.path.join(SESSIONS_DIR, COOKIES_FILENAME)
 
@@ -14,6 +17,12 @@ REQUIRED_COOKIE_STRINGS = ["sessionid", "ds_user_id", "instagram.com"]
 
 # Telegram limits
 MAX_TELEGRAM_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+MAX_UPLOAD_RETRIES = 3
+
+# Job and upload settings
+MAX_CONCURRENT_UPLOADS = 2
+JOB_CLEANUP_AGE = 24 * 60 * 60  # 24 hours in seconds
+STUCK_JOB_TIMEOUT = 30 * 60  # 30 minutes in seconds
 
 # Message templates
 MSG_NO_DOWNLOADS = "No recent downloads available. Download something first!"

@@ -1,13 +1,15 @@
+"""Gallery-dl integration utilities"""
 import os
-import tempfile
 import subprocess
 import json
 import logging
-from typing import Tuple, List
+from typing import List
+from utils.constants import SESSIONS_DIR, COOKIES_FILENAME
+
+logger = logging.getLogger(__name__)
 
 def check_gallery_dl():
     """Verify gallery-dl installation and configuration"""
-    logger = logging.getLogger(__name__)
     try:
         # Check gallery-dl version
         version_cmd = ["gallery-dl", "--version"]
@@ -19,7 +21,7 @@ def check_gallery_dl():
             raise RuntimeError("gallery-dl is not working properly")
             
         # Test cookie access
-        cookies_path = "/app/sessions/cookies.txt"
+        cookies_path = os.path.join(SESSIONS_DIR, COOKIES_FILENAME)
         if os.path.exists(cookies_path):
             logger.info(f"Cookie file exists at {cookies_path}")
             with open(cookies_path, 'r') as f:
@@ -35,20 +37,21 @@ def check_gallery_dl():
         logger.exception("Error checking gallery-dl")
         raise RuntimeError(f"gallery-dl check failed: {str(e)}")
 
-def run_gallery_dl(url: str) -> Tuple[str, List[str], List[str], str]:
+async def download_instagram_post(url: str, download_path: str) -> List[str]:
     """
-    Downloads content from Instagram using gallery-dl to a temp directory.
-    Returns (download_dir, file_paths, captions, stats_json)
+    Downloads content from Instagram using gallery-dl.
+    Returns a list of downloaded file paths.
     """
-    logger = logging.getLogger(__name__)
-    temp_dir = tempfile.mkdtemp(prefix="gallerydl_")
-    cookies_path = "/app/sessions/cookies.txt"
+    cookies_path = os.path.join(SESSIONS_DIR, COOKIES_FILENAME)
+    
+    # Ensure download directory exists
+    os.makedirs(download_path, exist_ok=True)
     
     # Build the gallery-dl command
     cmd = [
         "gallery-dl",
         "--write-metadata",
-        "-D", temp_dir,
+        "-D", download_path,
         "--verbose",
         "--config", os.getenv("GALLERY_DL_CFG", "/app/src/utils/gallery-dl.conf")
     ]
@@ -68,6 +71,7 @@ def run_gallery_dl(url: str) -> Tuple[str, List[str], List[str], str]:
     logging.info(f"gallery-dl return code: {result.returncode}")
     logging.info(f"gallery-dl stdout: {result.stdout[:500]}")
     logging.info(f"gallery-dl stderr: {result.stderr[:500]}")
+    
     if result.returncode != 0:
         error_msg = result.stderr if result.stderr else result.stdout
         if "login required" in error_msg.lower():
@@ -82,22 +86,16 @@ def run_gallery_dl(url: str) -> Tuple[str, List[str], List[str], str]:
     if not result.stdout and not result.stderr:
         raise RuntimeError("No output received from gallery-dl. This might indicate a configuration issue.")
     
-    # Parse JSON output for stats
-    stats_json = result.stdout
     # Find all downloaded files
     file_paths = []
-    captions = []
-    for root, _, files in os.walk(temp_dir):
+    for root, _, files in os.walk(download_path):
         for f in files:
-            if f.endswith(".json"):
-                # Try to extract caption from metadata
-                try:
-                    with open(os.path.join(root, f), "r") as meta:
-                        meta_json = json.load(meta)
-                        if "caption" in meta_json:
-                            captions.append(meta_json["caption"])
-                except Exception:
-                    pass
-            elif not f.endswith(".txt"):
+            if not f.endswith((".json", ".txt")):  # Skip metadata files
                 file_paths.append(os.path.join(root, f))
-    return temp_dir, file_paths, captions, stats_json
+                
+    if not file_paths:
+        logger.warning("No files were downloaded")
+        return []
+        
+    logger.info(f"Successfully downloaded {len(file_paths)} files")
+    return file_paths

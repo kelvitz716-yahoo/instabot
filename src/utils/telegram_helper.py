@@ -2,10 +2,34 @@
 
 import os
 import logging
+from typing import List
 from telegram import Update
 from telegram.ext import ContextTypes
+from telegram.constants import MessageLimit
 
 logger = logging.getLogger(__name__)
+
+def split_large_message(text: str, limit: int = MessageLimit.MAX_TEXT_LENGTH) -> List[str]:
+    """Split a large message into smaller chunks that fit Telegram's message size limits"""
+    if len(text) <= limit:
+        return [text]
+        
+    parts = []
+    while text:
+        if len(text) <= limit:
+            parts.append(text)
+            break
+            
+        # Find the last space within the limit
+        split_index = text.rfind(' ', 0, limit)
+        if split_index == -1:  # No space found, force split at limit
+            split_index = limit
+            
+        # Add the part and continue with remaining text
+        parts.append(text[:split_index])
+        text = text[split_index:].lstrip()
+        
+    return parts
 
 async def send_file(
     update: Update,

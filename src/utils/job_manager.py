@@ -5,11 +5,20 @@ import os
 import json
 import time
 from datetime import datetime
-from typing import Dict, List, Optional, TypedDict
+from typing import Dict, List, Optional, TypedDict, Any
 from dataclasses import dataclass, asdict
 from enum import Enum
 
-class JobStatus(Enum):
+class JSONSerializableEnum(Enum):
+    """Base class for JSON serializable enums"""
+    def to_json(self) -> str:
+        return self.value
+        
+    @classmethod
+    def from_json(cls, value: str) -> 'JSONSerializableEnum':
+        return cls(value)
+
+class JobStatus(JSONSerializableEnum):
     PENDING = "pending"
     DOWNLOADING = "downloading"
     UPLOADING = "uploading"
@@ -17,8 +26,9 @@ class JobStatus(Enum):
     FAILED = "failed"
     INTERRUPTED = "interrupted"
 
-class FileStatus(Enum):
+class FileStatus(JSONSerializableEnum):
     PENDING = "pending"
+    DOWNLOADING = "downloading"
     DOWNLOADED = "downloaded"
     UPLOADING = "uploading"
     UPLOADED = "uploaded"
@@ -45,9 +55,21 @@ class JobState:
     end_time: Optional[float] = None
     error: Optional[str] = None
 
+class EnumJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles our enum types"""
+    def default(self, obj: Any) -> Any:
+        if isinstance(obj, (JobStatus, FileStatus)):
+            return obj.value
+        if isinstance(obj, FileState):
+            return asdict(obj)
+        if isinstance(obj, JobState):
+            return asdict(obj)
+        return super().default(obj)
+
 class JobManager:
     def __init__(self, base_path: str = "/app/jobs"):
         self.base_path = base_path
+        self.json_encoder = EnumJSONEncoder
         self._ensure_directories()
         
     def _ensure_directories(self) -> None:
@@ -87,7 +109,7 @@ class JobManager:
         """Save job state to job_state.json"""
         state_file = os.path.join(job_path, "job_state.json")
         with open(state_file, "w") as f:
-            json.dump(asdict(state), f, indent=2)
+            json.dump(state, f, indent=2, cls=EnumJSONEncoder)
             
     def _load_job_state(self, job_path: str) -> Optional[JobState]:
         """Load job state from job_state.json"""
@@ -97,6 +119,14 @@ class JobManager:
             
         with open(state_file, "r") as f:
             data = json.load(f)
+            
+        # Convert string values back to enums
+        if "status" in data:
+            data["status"] = JobStatus(data["status"])
+        if "files" in data:
+            for file_data in data["files"].values():
+                if "status" in file_data:
+                    file_data["status"] = FileStatus(file_data["status"])
             # Convert the loaded data back to JobState
             return JobState(
                 job_id=data["job_id"],

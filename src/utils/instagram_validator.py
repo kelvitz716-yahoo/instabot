@@ -1,10 +1,21 @@
-"""Utilities for Instagram session validation"""
+"""Utilities for Instagram session and URL validation"""
 import json
 import logging
 import requests
 from typing import Tuple, Optional, Dict
+from utils.constants import INSTAGRAM_URL_PATTERN
 
 logger = logging.getLogger(__name__)
+
+def is_valid_instagram_url(url: str) -> bool:
+    """
+    Validate if the given URL is a valid Instagram URL.
+    Currently supports posts, reels, and stories.
+    """
+    if not url:
+        return False
+        
+    return bool(INSTAGRAM_URL_PATTERN.match(url))
 
 def load_cookies_from_file(cookie_file: str) -> Optional[Dict[str, str]]:
     """Load and parse cookies from Netscape/Mozilla format file"""
