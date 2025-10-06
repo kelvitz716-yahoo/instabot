@@ -8,7 +8,8 @@ COOKIES_FILENAME = "cookies.txt"
 COOKIES_PATH = os.path.join(SESSIONS_DIR, COOKIES_FILENAME)
 
 # Instagram related
-INSTAGRAM_URL_PATTERN = r"https?://(www\.)?instagram\.com/[\w\-./?=&%]+"
+import re
+INSTAGRAM_URL_PATTERN = re.compile(r"https?://(www\.)?instagram\.com/[\w\-./?=&%]+")
 REQUIRED_COOKIE_STRINGS = ["sessionid", "ds_user_id", "instagram.com"]
 
 # Telegram limits

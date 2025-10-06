@@ -4,11 +4,11 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from handlers.instagram import download_instagram_content
 from utils.constants import INSTAGRAM_URL_PATTERN
+from logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger = get_logger("handlers.message")
     try:
         message = update.message.text or ""
         # If it's a command, ignore (handled elsewhere)
@@ -21,16 +21,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"Detected Instagram URL: {url}")
             logger.info("Attempting to download content...")
             try:
-                result = download_instagram_content(url)
-                if not result or not result.strip():
-                    logger.error("Empty result returned from download_instagram_content")
-                    result = "An error occurred: No details returned."
-                else:
-                    logger.info(f"Download result: {result}")
+                await update.message.reply_text("Starting download, please wait...")
+                result, file_paths = await download_instagram_content(url)
+                await update.message.reply_text(result)
+                
+                # If we have files, send them
+                if file_paths:
+                    from handlers.download import send_files
+                    await send_files(update, context, file_paths)
             except Exception as e:
                 logger.exception("Error in download_instagram_content")
-                result = f"Download error: {str(e)}"
-            await update.message.reply_text(result)
+                await update.message.reply_text(f"Download error: {str(e)}")
         # Ignore all other messages
     except Exception as e:
         logger.exception("Error handling message")
