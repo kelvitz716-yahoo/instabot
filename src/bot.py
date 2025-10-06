@@ -25,13 +25,31 @@ def main():
         from utils.service_manager import service_manager
         from utils.state_tracker import StateTracker
         from utils.reporting import ReportingSystem
+        from utils.job_manager import JobManager
+        from utils.recovery import RecoverySystem
         from handlers.download import DownloadHandler
         from handlers.upload import UploadHandler
         
+        # Initialize core services
+        job_manager = JobManager()
         state_tracker = StateTracker()
         reporting_system = ReportingSystem()
+        recovery_system = RecoverySystem()
+        
+        # Initialize handlers
         download_handler = DownloadHandler()
         upload_handler = UploadHandler()
+        
+        # Check for and recover interrupted jobs
+        logger.info("Scanning for interrupted jobs...")
+        interrupted_jobs = recovery_system.scan_for_interrupted_jobs()
+        if interrupted_jobs:
+            logger.info(f"Found {len(interrupted_jobs)} interrupted jobs. Attempting recovery...")
+            for job in interrupted_jobs:
+                if recovery_system.resume_job(job):
+                    logger.info(f"Successfully queued job {job.job_id} for recovery")
+                else:
+                    logger.warning(f"Could not recover job {job.job_id}, marked as failed")
         
         # Initialize bot application
         app = ApplicationBuilder().token(get_bot_token()).build()

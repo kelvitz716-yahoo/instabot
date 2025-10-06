@@ -9,6 +9,8 @@ from typing import Dict, List, Optional, TypedDict, Any
 from dataclasses import dataclass, asdict
 from enum import Enum
 
+from .service_manager import service_manager
+
 class JSONSerializableEnum(Enum):
     """Base class for JSON serializable enums"""
     def to_json(self) -> str:
@@ -25,6 +27,7 @@ class JobStatus(JSONSerializableEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     INTERRUPTED = "interrupted"
+    RECOVERING = "recovering"  # Added for crash recovery
 
 class FileStatus(JSONSerializableEnum):
     PENDING = "pending"
@@ -71,6 +74,7 @@ class JobManager:
         self.base_path = base_path
         self.json_encoder = EnumJSONEncoder
         self._ensure_directories()
+        service_manager.register(JobManager, self)
         
     def _ensure_directories(self) -> None:
         """Create the base job directory if it doesn't exist"""
