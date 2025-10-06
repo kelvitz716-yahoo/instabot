@@ -55,9 +55,16 @@ class DownloadHandler:
                 
             # Initialize download job
             job_id = self.state_tracker.initialize_download_job(url)
-            status_message = await update.message.reply_text(
-                f"⏳ Starting download for job {job_id}..."
+            
+            # Initial status message
+            initial_msg = (
+                f"🔗 Processing Instagram URL\n"
+                f"══════════════════════\n"
+                f"Job ID: {job_id}\n"
+                f"URL: {url}\n\n"
+                f"⏳ Initializing download..."
             )
+            status_message = await update.message.reply_text(initial_msg)
             
             # Start download process
             download_path = os.path.join(JOB_BASE_DIR, job_id)
@@ -94,9 +101,18 @@ class DownloadHandler:
                     bytes_processed=total_bytes
                 )
                 
+            from utils.ui_helper import format_job_progress
+            
+            complete_msg = format_job_progress(
+                job_id=job_id,
+                downloaded=len(downloaded_files),
+                uploaded=0,
+                failed=0,
+                total=len(downloaded_files)
+            )
+            
             await status_message.edit_text(
-                f"✅ Download completed: {len(downloaded_files)} files\n"
-                "Starting upload process..."
+                complete_msg + "\n\n🔄 Initiating upload process..."
             )
             
             # Start upload process

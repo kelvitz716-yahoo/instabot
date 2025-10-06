@@ -7,6 +7,7 @@ from handlers.message import handle_message
 from handlers.session import get_session_conversation_handler
 from handlers.download import get_download_handlers
 from handlers.report import get_report_handlers
+from handlers.status import status
 
 async def setup_services():
     """Initialize all services and perform recovery operations."""
@@ -74,6 +75,7 @@ def run():
         # Register handlers in order of precedence
         handlers = [
             CommandHandler("start", start),
+            CommandHandler("status", status),
             get_session_conversation_handler(),
             *get_download_handlers(),
             *get_report_handlers(),

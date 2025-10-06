@@ -237,6 +237,8 @@ class RecoverySystem:
         """Get list of job IDs in the jobs directory."""
         try:
             jobs_dir = os.path.join(self.job_manager.base_path, "jobs")
+            # Create directory if it doesn't exist
+            os.makedirs(jobs_dir, exist_ok=True)
             return [d for d in os.listdir(jobs_dir)
                    if os.path.isdir(os.path.join(jobs_dir, d))]
         except Exception as e:

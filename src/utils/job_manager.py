@@ -41,6 +41,12 @@ class FileStatus(JSONSerializableEnum):
     UPLOADED = "uploaded"
     FAILED = "failed"
 
+class EnumEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (JobStatus, FileStatus)):
+            return obj.value
+        return super().default(obj)
+
 @dataclass
 class FileState:
     filename: str
@@ -48,21 +54,52 @@ class FileState:
     original_url: str
     download_time: Optional[float] = None
     upload_time: Optional[float] = None
-    retries: int = 0
     error: Optional[str] = None
+    retries: int = 0
     file_size: int = 0  # Track file size for progress monitoring
 
 @dataclass
 class JobState:
+    """Represents the state of a download/upload job"""
     job_id: str
     source_url: str
     status: JobStatus
     start_time: float
     files: Dict[str, FileState]
-    expected_files: int = 0
     end_time: Optional[float] = None
     error: Optional[str] = None
-    last_heartbeat: Optional[float] = None  # Track last activity time
+    download_opts: Optional[Dict[str, Any]] = None
+    expected_files: Optional[int] = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to a JSON-serializable dictionary"""
+        data = asdict(self)
+        # Convert enums to their string values
+        data['status'] = self.status.value
+        for filename, file_state in data['files'].items():
+            if isinstance(file_state['status'], FileStatus):
+                data['files'][filename]['status'] = file_state['status'].value
+        return data
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'JobState':
+        """Create JobState from a dictionary"""
+        # Convert string values back to enums
+        data['status'] = JobStatus(data['status'])
+        files = {}
+        for filename, file_state in data['files'].items():
+            files[filename] = FileState(
+                filename=filename,
+                status=FileStatus(file_state['status']),
+                original_url=file_state['original_url'],
+                download_time=file_state.get('download_time'),
+                upload_time=file_state.get('upload_time'),
+                error=file_state.get('error'),
+                retries=file_state.get('retries', 0),
+                file_size=file_state.get('file_size', 0)
+            )
+        data['files'] = files
+        return cls(**data)
 
 class EnumJSONEncoder(json.JSONEncoder):
     """Custom JSON encoder that handles our enum types"""
@@ -86,6 +123,11 @@ class JobManager:
         self.base_path = JOB_BASE_DIR
         self._heartbeat_tracker = HeartbeatTracker()
         self._recovery_system = None
+        
+        # Ensure base directories exist
+        os.makedirs(self.base_path, exist_ok=True)
+        os.makedirs(os.path.join(self.base_path, "jobs"), exist_ok=True)
+        
         service_manager.register(JobManager, self)
         
     def initialize_recovery(self, recovery_system=None):
@@ -147,7 +189,7 @@ class JobManager:
     def create_job(self, source_url: str) -> str:
         """Create a new job and return its ID"""
         job_id = f"job_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        job_path = os.path.join(self.base_path, job_id)
+        job_path = os.path.join(self.base_path, "jobs", job_id)
         
         # Create job directory structure
         os.makedirs(job_path)
@@ -161,8 +203,12 @@ class JobManager:
             source_url=source_url,
             status=JobStatus.PENDING,
             start_time=time.time(),
-            files={}
+            files={},
+            expected_files=0
         )
+        
+        # Add to active jobs
+        self._active_jobs[job_id] = job_state
         
         # Save initial state
         self._save_job_state(job_path, job_state)
@@ -174,55 +220,52 @@ class JobManager:
         return job_id
         
     def _save_job_state(self, job_path: str, state: JobState) -> None:
-        """Save job state to job_state.json"""
-        state_file = os.path.join(job_path, "job_state.json")
-        with open(state_file, "w") as f:
-            json.dump(state, f, indent=2, cls=EnumJSONEncoder)
+        """Save the job state to disk"""
+        try:
+            state_file = os.path.join(job_path, "job_state.json")
+            os.makedirs(os.path.dirname(state_file), exist_ok=True)
+            with open(state_file, "w") as f:
+                json.dump(state.to_dict(), f, indent=4)
+                
+        except Exception as e:
+            logger.error(f"Failed to save state file {state_file}: {str(e)}")
+            raise
             
     def _load_job_state(self, job_path: str) -> Optional[JobState]:
         """Load job state from job_state.json"""
+        job_id = os.path.basename(job_path)
+        
+        # If state is already in memory, return it
+        if job_id in self._active_jobs:
+            return self._active_jobs[job_id]
+        
         state_file = os.path.join(job_path, "job_state.json")
         if not os.path.exists(state_file):
             return None
             
-        with open(state_file, "r") as f:
-            data = json.load(f)
-            
-        # Convert string values back to enums
-        if "status" in data:
-            data["status"] = JobStatus(data["status"])
-        if "files" in data:
-            for file_data in data["files"].values():
-                if "status" in file_data:
-                    file_data["status"] = FileStatus(file_data["status"])
-            # Convert the loaded data back to JobState
-            return JobState(
-                job_id=data["job_id"],
-                source_url=data["source_url"],
-                status=JobStatus(data["status"]),
-                start_time=data["start_time"],
-                files={k: FileState(**v) for k, v in data["files"].items()},
-                expected_files=data["expected_files"],
-                end_time=data.get("end_time"),
-                error=data.get("error")
-            )
+        try:
+            with open(state_file, "r") as f:
+                data = json.load(f)
+            state = JobState.from_dict(data)
+            self._active_jobs[job_id] = state  # Cache in memory
+            return state
+        except Exception as e:
+            logger.error(f"Failed to load state file {state_file}: {str(e)}")
+            return None
             
     def get_job_state(self, job_id: str) -> Optional[JobState]:
         """Get the current state of a job"""
-        job_path = os.path.join(self.base_path, job_id)
-        return self._load_job_state(job_path)
-        
-    def get_stalled_jobs(self, timeout_seconds: int = 300) -> List[str]:
-        """
-        Get a list of job IDs that have been stalled (no heartbeat updates) for longer than the timeout
-        
-        Args:
-            timeout_seconds: Number of seconds after which a job is considered stalled
+        if job_id in self._active_jobs:
+            return self._active_jobs[job_id]
             
-        Returns:
-            List of job IDs that are stalled
-        """
-        return self._heartbeat_tracker.get_stalled_jobs(timeout_seconds)
+        # Try to load from disk if not in memory
+        try:
+            job_path = os.path.join(self.base_path, "jobs", job_id)
+            return self._load_job_state(job_path)
+        except Exception as e:
+            logger.error(f"Failed to load state for job {job_id}: {str(e)}")
+            
+        return None
         
     def update_job_heartbeat(
         self,
@@ -246,7 +289,7 @@ class JobManager:
                         error: Optional[str] = None,
                         **kwargs) -> None:
         """Update job state with new information"""
-        job_path = os.path.join(self.base_path, job_id)
+        job_path = os.path.join(self.base_path, "jobs", job_id)
         state = self._load_job_state(job_path)
         
         if not state:
@@ -262,12 +305,13 @@ class JobManager:
             if hasattr(state, key):
                 setattr(state, key, value)
                 
+        self._active_jobs[job_id] = state
         self._save_job_state(job_path, state)
         
     def add_file_to_job(self, job_id: str, filename: str, 
                         original_url: str) -> None:
         """Add a new file to track in the job"""
-        job_path = os.path.join(self.base_path, job_id)
+        job_path = os.path.join(self.base_path, "jobs", job_id)
         state = self._load_job_state(job_path)
         
         if not state:
@@ -279,6 +323,7 @@ class JobManager:
             original_url=original_url
         )
         
+        self._active_jobs[job_id] = state
         self._save_job_state(job_path, state)
         
     def update_file_state(self, job_id: str, filename: str,
@@ -286,9 +331,12 @@ class JobManager:
                          bytes_processed: int = 0,
                          **kwargs) -> None:
         """Update the state of a specific file in a job"""
-        job_path = os.path.join(self.base_path, job_id)
+        job_path = os.path.join(self.base_path, "jobs", job_id)
         state = self._load_job_state(job_path)
         
+        if not state or filename not in state.files:
+            raise ValueError(f"File {filename} not found in job {job_id}")
+            
         # Update heartbeat with progress
         self._heartbeat_tracker.update_heartbeat(
             job_id=job_id,
@@ -297,9 +345,6 @@ class JobManager:
             current_operation=f"Processing {filename}",
             bytes_processed=bytes_processed
         )
-        
-        if not state or filename not in state.files:
-            raise ValueError(f"File {filename} not found in job {job_id}")
             
         file_state = state.files[filename]
         if status:
@@ -310,11 +355,12 @@ class JobManager:
             if hasattr(file_state, key):
                 setattr(file_state, key, value)
                 
+        self._active_jobs[job_id] = state
         self._save_job_state(job_path, state)
         
     def complete_job(self, job_id: str) -> None:
         """Mark a job as completed and clean up"""
-        job_path = os.path.join(self.base_path, job_id)
+        job_path = os.path.join(self.base_path, "jobs", job_id)
         state = self._load_job_state(job_path)
         
         if not state:
@@ -325,12 +371,19 @@ class JobManager:
         
         self._save_job_state(job_path, state)
         
+        # Update active jobs
+        self._active_jobs[job_id] = state
+        
         # Remove lock file
         lock_file = os.path.join(job_path, ".lock")
         if os.path.exists(lock_file):
             os.remove(lock_file)
+        
+        # Remove from active jobs if completed
+        if state.status == JobStatus.COMPLETED:
+            self._active_jobs.pop(job_id, None)
             
     def is_job_locked(self, job_id: str) -> bool:
         """Check if a job is currently locked/in-progress"""
-        lock_file = os.path.join(self.base_path, job_id, ".lock")
+        lock_file = os.path.join(self.base_path, "jobs", job_id, ".lock")
         return os.path.exists(lock_file)
