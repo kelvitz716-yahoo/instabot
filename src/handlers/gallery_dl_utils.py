@@ -49,7 +49,8 @@ def run_gallery_dl(url: str) -> Tuple[str, List[str], List[str], str]:
         "gallery-dl",
         "--write-metadata",
         "-D", temp_dir,
-        "--verbose"
+        "--verbose",
+        "--config", os.getenv("GALLERY_DL_CFG", "/app/src/utils/gallery-dl.conf")
     ]
     
     # Add cookies if available

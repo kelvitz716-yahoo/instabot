@@ -14,5 +14,6 @@ RUN pip install --no-cache-dir -r requirements.txt \
 COPY src/ ./src/
 
 ENV PYTHONUNBUFFERED=1
+ENV GALLERY_DL_CFG=/app/src/utils/gallery-dl.conf
 
 CMD ["python", "src/bot.py"]

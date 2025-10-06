@@ -1,12 +1,13 @@
+import os
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters, ConversationHandler
 from logger import get_logger
 from utils.constants import (
-    SESSIONS_DIR, COOKIES_PATH, HELP_SESSION_LOAD, 
-    REQUIRED_COOKIE_STRINGS
+    SESSIONS_DIR, COOKIES_PATH, HELP_SESSION_LOAD
 )
-from utils.file_handler import ensure_dir, validate_file_content
+from utils.file_handler import ensure_dir
 from utils.telegram_helper import reply_with_error
+from utils.instagram_validator import validate_instagram_session
 
 ASK_UPLOAD = 1
 logger = get_logger("handlers.session")
@@ -32,21 +33,27 @@ async def receive_cookies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_file = await file.get_file()
     await tg_file.download_to_drive(COOKIES_PATH)
     
-    # Validate file content
-    valid, error_msg = validate_file_content(COOKIES_PATH, REQUIRED_COOKIE_STRINGS)
+    # Validate Instagram session
+    valid, error_msg = validate_instagram_session(COOKIES_PATH)
     
     if valid:
         await update.message.reply_text(
-            "Cookies file uploaded and validated successfully! "
-            "Instagram downloads will now use this session."
+            "✅ Session validated successfully! Your Instagram cookies are working.\n"
+            "You can now use the bot to download Instagram content."
         )
-        logger.info("Valid Instagram cookies.txt uploaded and saved.")
+        logger.info("Valid Instagram session validated and saved.")
     else:
         await reply_with_error(
             update, context,
-            f"Cookie validation failed: {error_msg}. Please try again.",
-            f"Invalid cookies.txt uploaded: {error_msg}"
+            f"❌ Session validation failed: {error_msg}\n"
+            "Please make sure your cookies are fresh and try again.",
+            f"Instagram session validation failed: {error_msg}"
         )
+        # Clean up invalid cookie file
+        try:
+            os.remove(COOKIES_PATH)
+        except:
+            pass
         return ASK_UPLOAD
         
     return ConversationHandler.END

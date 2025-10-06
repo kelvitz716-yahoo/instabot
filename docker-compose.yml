@@ -8,3 +8,4 @@ services:
     container_name: instabot
     volumes:
       - ./sessions:/app/sessions:rw
+      - ./downloads:/app/downloads:rw
