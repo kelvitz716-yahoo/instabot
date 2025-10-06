@@ -25,7 +25,7 @@ MSG_FILE_TOO_LARGE = (
 MSG_DOWNLOAD_SUCCESS = (
     "Successfully downloaded {count} file(s) - Total size: {size:.1f}MB\n\n"
     "Files:\n{files}\n\n"
-    "Use /send_last to receive the downloaded files."
+    "Wait to receive the downloaded files."
 )
 MSG_NO_URL = "Please provide an Instagram URL. Usage: /download <url>"
 MSG_INVALID_URL = "Error: Not a valid Instagram URL. Please provide a link from instagram.com"
