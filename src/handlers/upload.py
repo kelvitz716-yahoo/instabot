@@ -53,18 +53,23 @@ class UploadHandler:
             successful = 0
             failed = 0
             
-            # Send initial status message with progress
+            # Send initial status message that we'll update
             from utils.ui_helper import format_job_progress
-            
-            initial_progress = format_job_progress(
-                job_id=job_id,
-                downloaded=len(files_to_upload),
-                uploaded=0,
-                failed=0,
-                total=len(files_to_upload)
+            status_msg = await update.message.reply_text(
+                format_job_progress(
+                    job_id=job_id,
+                    downloaded=len(files_to_upload),
+                    uploaded=0,
+                    failed=0,
+                    total=len(files_to_upload),
+                    duration=0,
+                    is_complete=False,
+                    status_override="⏳ Preparing upload..."
+                )
             )
             
-            status_message = await update.message.reply_text(initial_progress)
+            last_update = time.time()
+            UPDATE_INTERVAL = 15  # Update every 15 seconds
             
             # Process uploads with concurrency limit
             tasks = []
@@ -77,6 +82,29 @@ class UploadHandler:
                 )
                 tasks.append(task)
                 
+                # Update status message periodically
+                now = time.time()
+                if now - last_update >= UPDATE_INTERVAL:
+                    progress = format_job_progress(
+                        job_id=job_id,
+                        downloaded=len(files_to_upload),
+                        uploaded=successful,
+                        failed=failed,
+                        total=len(files_to_upload),
+                        duration=now - start_time,
+                        is_complete=False,
+                        status_override=f"⏬ Uploading {successful + 1}/{len(files_to_upload)} files"
+                    )
+                    try:
+                        await context.bot.edit_message_text(
+                            chat_id=update.effective_chat.id,
+                            message_id=status_msg.message_id,
+                            text=progress
+                        )
+                        last_update = now
+                    except Exception as e:
+                        logger.warning(f"Failed to update status message: {e}")
+
             # Wait for all uploads to complete
             results = await asyncio.gather(*tasks, return_exceptions=True)
             
@@ -90,21 +118,39 @@ class UploadHandler:
                 else:
                     failed += 1
                     
-            # Update final status with formatted progress
+            # Calculate duration and update final status
+            duration = time.time() - start_time
+            
+            # Update status message with final results
             final_progress = format_job_progress(
                 job_id=job_id,
                 downloaded=len(files_to_upload),
                 uploaded=successful,
                 failed=failed,
                 total=len(files_to_upload),
-                duration=time.time() - start_time if 'start_time' in locals() else None
+                duration=duration,
+                is_complete=True
             )
             
-            await status_message.edit_text(final_progress)
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=update.effective_chat.id,
+                    message_id=status_msg.message_id,
+                    text=final_progress
+                )
+            except Exception as e:
+                logger.warning(f"Failed to update final status: {e}")
+                # If edit fails, send as new message
+                await update.message.reply_text(final_progress)
             
-            # Finalize job state
-            self.state_tracker.finalize_job(job_id)
+            # Finalize job state with duration
+            self.state_tracker.finalize_job(
+                job_id,
+                duration=duration,
+                suppress_status=True  # Don't show additional status message
+            )
             
+            # Note: We don't need to show get_upload_status here since we have the final report
             return successful, failed
             
         except Exception as e:
@@ -141,11 +187,24 @@ class UploadHandler:
                 # Determine file type and use appropriate upload method
                 file_ext = os.path.splitext(filename)[1].lower()
                 
+                # Get list of all files in job
+                files_in_job = self.state_tracker.get_job_files(job_id)
+                total_media = len(files_in_job) if files_in_job else None
+
+                # Get media number if possible
+                media_number = None
+                if total_media and files_in_job and filename in files_in_job:
+                    try:
+                        media_number = files_in_job.index(filename) + 1
+                        total_media = len(files_in_job)
+                    except (ValueError, TypeError):
+                        pass  # Skip if we can't determine the position
+
+                # Get media info
+                media_info = get_media_info(file_path)
+                caption = format_media_info(media_info, media_number, total_media)
+
                 if file_ext in ['.jpg', '.jpeg', '.png']:
-                    # Get media info
-                    media_info = get_media_info(file_path)
-                    caption = f"{filename}\n\n{format_media_info(media_info)}"
-                    
                     await context.bot.send_photo(
                         chat_id=update.effective_chat.id,
                         photo=open(file_path, 'rb'),
@@ -154,10 +213,6 @@ class UploadHandler:
                         parse_mode='HTML'
                     )
                 elif file_ext in ['.mp4', '.mov']:
-                    # Get media info
-                    media_info = get_media_info(file_path)
-                    caption = f"{filename}\n\n{format_media_info(media_info)}"
-                    
                     await context.bot.send_video(
                         chat_id=update.effective_chat.id,
                         video=open(file_path, 'rb'),
@@ -166,10 +221,7 @@ class UploadHandler:
                         parse_mode='HTML'
                     )
                 else:
-                    # Get media info
-                    media_info = get_media_info(file_path)
-                    caption = f"{filename}\n\n{format_media_info(media_info)}"
-                    
+                        # Get media info (avoid duplicate call)
                     await context.bot.send_document(
                         chat_id=update.effective_chat.id,
                         document=open(file_path, 'rb'),

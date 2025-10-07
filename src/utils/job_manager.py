@@ -287,8 +287,18 @@ class JobManager:
     def update_job_state(self, job_id: str, 
                         status: Optional[JobStatus] = None,
                         error: Optional[str] = None,
+                        suppress_status: bool = False,
                         **kwargs) -> None:
-        """Update job state with new information"""
+        """
+        Update job state with new information.
+        
+        Args:
+            job_id: The ID of the job to update
+            status: Optional new status for the job
+            error: Optional error message
+            suppress_status: If True, don't send a status message update
+            **kwargs: Additional state fields to update
+        """
         job_path = os.path.join(self.base_path, "jobs", job_id)
         state = self._load_job_state(job_path)
         
@@ -299,6 +309,8 @@ class JobManager:
             state.status = status
         if error:
             state.error = error
+        if 'duration' in kwargs:
+            state.duration = kwargs['duration']
             
         # Update any additional fields
         for key, value in kwargs.items():

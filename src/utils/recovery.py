@@ -70,12 +70,12 @@ class RecoverySystem:
                 if now - last_update > self.inactive_timeout:
                     msg = f"🔎 Found interrupted job: {job_id}\nLast update: {last_update.strftime('%Y-%m-%d %H:%M:%S')}"
                     logger.info(msg)
-                    self.reporting.send_notification(msg)
+                    await self.reporting._send_notification(msg)
                     interrupted_jobs.append(job_state)
 
         if interrupted_jobs:
             summary = f"📊 Recovery scan complete:\nFound {len(interrupted_jobs)} interrupted job(s)"
-            self.reporting.send_notification(summary)
+            await self.reporting._send_notification(summary)
 
         return interrupted_jobs
 
@@ -94,7 +94,7 @@ class RecoverySystem:
             self.job_manager.update_job_state(job_state.job_id, status=JobStatus.RECOVERING)
             msg = f"🔄 Starting recovery for job {job_state.job_id}"
             logger.info(msg)
-            self.reporting.send_notification(msg)
+            await self.reporting._send_notification(msg)
             
             # Check each file's status and resume accordingly
             files_to_retry = []
@@ -107,43 +107,43 @@ class RecoverySystem:
                         file_state.error = "Max retries exceeded during recovery"
                         err_msg = f"❌ {filename}: Max retries exceeded during recovery"
                         logger.warning(err_msg)
-                        self.reporting.send_notification(err_msg)
+                        await self.reporting._send_notification(err_msg)
 
             if not files_to_retry:
                 msg = f"❌ No files eligible for retry in job {job_state.job_id}"
                 logger.info(msg)
-                self.reporting.send_notification(msg)
+                await self.reporting._send_notification(msg)
                 self.job_manager.update_job_state(job_state.job_id, status=JobStatus.FAILED)
                 return False
 
             # Retry eligible files
             status_msg = f"📝 Recovery plan for job {job_state.job_id}:\n"
             status_msg += f"Total files to retry: {len(files_to_retry)}"
-            self.reporting.send_notification(status_msg)
+            await self.reporting._send_notification(status_msg)
 
             for filename, file_state in files_to_retry:
                 if file_state.status == FileStatus.DOWNLOADING:
                     msg = f"⬇️ Resuming download for {filename}"
                     logger.info(msg)
-                    self.reporting.send_notification(msg)
+                    await self.reporting._send_notification(msg)
                     await self._resume_download(job_state.job_id, filename, file_state)
                 elif file_state.status == FileStatus.UPLOADING:
                     msg = f"⬆️ Resuming upload for {filename}"
                     logger.info(msg)
-                    self.reporting.send_notification(msg)
+                    await self.reporting._send_notification(msg)
                     self._resume_upload(job_state.job_id, filename, file_state)
             
             # Update job status based on progress
             self._update_job_status_after_recovery(job_state)
             
             success_msg = f"✅ Recovery completed for job {job_state.job_id}"
-            self.reporting.send_notification(success_msg)
+            await self.reporting._send_notification(success_msg)
             return True
             
         except Exception as e:
             error_msg = f"❌ Failed to resume job {job_state.job_id}:\n{str(e)}"
             logger.error(error_msg)
-            self.reporting.send_notification(error_msg)
+            await self.reporting._send_notification(error_msg)
             self.job_manager.update_job_state(
                 job_state.job_id,
                 status=JobStatus.FAILED,
@@ -179,7 +179,7 @@ class RecoverySystem:
         except Exception as e:
             error_msg = f"❌ Failed to resume download for {filename}:\n{str(e)}"
             logger.error(error_msg)
-            self.reporting.send_notification(error_msg)
+            await self.reporting._send_notification(error_msg)
             file_state.status = FileStatus.FAILED
             file_state.error = str(e)
             raise

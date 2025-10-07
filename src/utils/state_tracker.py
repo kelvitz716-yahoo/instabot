@@ -22,6 +22,25 @@ class StateTracker:
         self.job_manager = job_manager or service_manager.get(JobManager)
         service_manager.register(StateTracker, self)
         
+    def get_job_files(self, job_id: str) -> List[str]:
+        """Get list of all files for a job"""
+        job_state = self.job_manager.get_job_state(job_id)
+        if not job_state:
+            return []
+        
+        files = list(job_state.files.keys())
+        
+        def get_file_number(filename: str) -> int:
+            """Extract the number from filename pattern like ..._01.jpg"""
+            try:
+                # Split by underscore and get last part before extension
+                num_part = filename.split('_')[-1].split('.')[0]
+                return int(num_part)
+            except (IndexError, ValueError):
+                return 0
+                
+        return sorted(files, key=get_file_number)
+            
     def update_job_heartbeat(
         self,
         job_id: str,
@@ -84,10 +103,10 @@ class StateTracker:
                 raise ValueError(f"No state found for job {job_id}")
                 
             # Find all downloaded files not yet uploaded
-            to_upload = [
-                fname for fname, fstate in state.files.items()
+            to_upload = sorted([
+                str(fname) for fname, fstate in state.files.items()
                 if fstate.status == FileStatus.DOWNLOADED
-            ]
+            ])
             
             # Mark files as uploading
             for filename in to_upload:
@@ -121,35 +140,47 @@ class StateTracker:
             logger.error(f"Failed to record upload state for {filename}: {str(e)}")
             raise
             
-    def finalize_job(self, job_id: str) -> None:
+    def finalize_job(
+        self, 
+        job_id: str, 
+        suppress_status: bool = False,
+        duration: Optional[float] = None
+    ) -> None:
         """
-        Finalize a job, checking if all files are processed and updating state accordingly.
+        Mark a job as completed and perform any necessary cleanup.
+        Should be called after all files are processed.
+        
+        Args:
+            job_id: The ID of the job to finalize
+            suppress_status: If True, don't send an additional status message
+            duration: Optional duration in seconds to record for the job
         """
         try:
-            state = self.job_manager.get_job_state(job_id)
-            if not state:
-                raise ValueError(f"No state found for job {job_id}")
+            job_state = self.job_manager.get_job_state(job_id)
+            if not job_state:
+                logger.error(f"Cannot finalize job {job_id}: Job state not found")
+                return
                 
-            # Check if all files are processed
-            all_processed = all(
-                fstate.status in (FileStatus.UPLOADED, FileStatus.FAILED)
-                for fstate in state.files.values()
-            )
-            
-            if all_processed:
-                # Count successes and failures
-                uploaded = sum(1 for f in state.files.values() if f.status == FileStatus.UPLOADED)
-                failed = sum(1 for f in state.files.values() if f.status == FileStatus.FAILED)
+            if job_state.status not in [JobStatus.COMPLETED, JobStatus.FAILED]:
+                # Check if any files failed
+                failed_files = len([f for f in job_state.files.values() if f.status == FileStatus.FAILED])
+                total_files = len(job_state.files)
                 
-                logger.info(f"Job {job_id} completed: {uploaded} uploaded, {failed} failed")
-                
-                self.job_manager.complete_job(job_id)
-            else:
-                logger.warning(f"Job {job_id} has unprocessed files")
-                
+                # Update job status based on failures
+                new_status = JobStatus.COMPLETED
+                if failed_files == total_files:
+                    new_status = JobStatus.FAILED
+                elif failed_files > 0:
+                    new_status = JobStatus.PARTIALLY_COMPLETED
+                    
+                self.job_manager.update_job_state(
+                    job_id, 
+                    status=new_status,
+                    duration=duration,
+                    suppress_status=suppress_status
+                )
         except Exception as e:
-            logger.error(f"Failed to finalize job {job_id}: {str(e)}")
-            raise
+            logger.error(f"Error finalizing job {job_id}: {str(e)}")
             
     def get_job_summary(self, job_id: str) -> Dict[str, Any]:
         """Get a summary of the job's current state"""
