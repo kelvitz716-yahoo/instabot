@@ -74,6 +74,7 @@ class ReportingSystem:
         total_files = 0
         total_size = 0
         
+        # Only get jobs that have valid state files
         for job_id in self._get_active_job_ids():
             try:
                 summary = self.state_tracker.get_job_summary(job_id)
@@ -82,7 +83,7 @@ class ReportingSystem:
                     total_files += summary['stats']['total_files']
                     total_size += self._get_job_size(job_id)
             except Exception as e:
-                logger.error(f"Error getting summary for job {job_id}: {str(e)}")
+                logger.debug(f"Skipping job {job_id} - no valid state: {str(e)}")
                 
         return {
             "active_jobs_count": len(active_jobs),
@@ -203,14 +204,25 @@ class ReportingSystem:
                 "error": str(e)
             }
             
-    def _get_active_job_ids(self) -> List[str]:
-        """Get list of currently active job IDs"""
-        active_statuses = {JobStatus.DOWNLOADING.value, JobStatus.UPLOADING.value}
-        return [
-            job_id for job_id in os.listdir(JOB_BASE_DIR)
-            if os.path.isdir(os.path.join(JOB_BASE_DIR, job_id))
-            and self._get_job_status(job_id) in active_statuses
-        ]
+    def _is_valid_job_dir(self, job_id: str) -> bool:
+        """Check if a directory is a valid job directory"""
+        if job_id == "jobs":  # Skip the jobs subdirectory
+            return False
+        job_dir = os.path.join(JOB_BASE_DIR, "jobs", job_id)
+        if not os.path.isdir(job_dir):
+            return False
+        state_file = os.path.join(job_dir, "job_state.json")
+        return os.path.exists(state_file)
+
+    def _get_active_job_ids(self):
+        """Get a list of job IDs from the jobs directory"""
+        jobs_dir = os.path.join(JOB_BASE_DIR, "jobs")
+        try:
+            return [d for d in os.listdir(jobs_dir) 
+                   if self._is_valid_job_dir(d)]
+        except Exception as e:
+            logger.error(f"Error getting active jobs: {str(e)}")
+            return []
         
     def _get_job_size(self, job_id: str) -> int:
         """Calculate total size of all files in a job"""

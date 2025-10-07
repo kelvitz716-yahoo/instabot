@@ -135,6 +135,9 @@ class JobManager:
         if not self._recovery_system:
             from .recovery import RecoverySystem
             self._recovery_system = recovery_system or RecoverySystem(job_manager=self)
+            
+        # Clean up old job directories without valid state
+        self._cleanup_invalid_jobs()
 
     def get_recovery_system(self):
         """Get the recovery system, initializing it if needed."""
@@ -145,6 +148,40 @@ class JobManager:
     def _ensure_directories(self) -> None:
         """Create the base job directory if it doesn't exist"""
         os.makedirs(self.base_path, exist_ok=True)
+        
+    def _cleanup_invalid_jobs(self) -> None:
+        """Clean up job directories without valid state files"""
+        jobs_dir = os.path.join(self.base_path, "jobs")
+        if not os.path.exists(jobs_dir):
+            return
+            
+        for job_id in os.listdir(jobs_dir):
+            job_path = os.path.join(jobs_dir, job_id)
+            if not os.path.isdir(job_path):
+                continue
+                
+            state_file = os.path.join(job_path, "job_state.json")
+            if not os.path.exists(state_file):
+                logger.warning(f"Found job directory without state file: {job_id}")
+                continue
+                
+            try:
+                with open(state_file, 'r') as f:
+                    state_data = json.load(f)
+                JobState.from_dict(state_data)  # Validate state structure
+            except Exception as e:
+                logger.error(f"Invalid state file for job {job_id}: {str(e)}")
+                continue
+            
+            required_dirs = ["media", "uploaded", "failed"]
+            missing_dirs = [d for d in required_dirs 
+                          if not os.path.isdir(os.path.join(job_path, d))]
+            
+            if missing_dirs:
+                # Create missing directories instead of failing the job
+                for dirname in missing_dirs:
+                    os.makedirs(os.path.join(job_path, dirname), exist_ok=True)
+                logger.info(f"Created missing directories for job {job_id}: {missing_dirs}")
         
     def get_stalled_jobs(self, timeout_seconds: int = 300) -> List[str]:
         """
@@ -192,10 +229,11 @@ class JobManager:
         job_path = os.path.join(self.base_path, "jobs", job_id)
         
         # Create job directory structure
-        os.makedirs(job_path)
-        os.makedirs(os.path.join(job_path, "media"))
-        os.makedirs(os.path.join(job_path, "uploaded"))
-        os.makedirs(os.path.join(job_path, "failed"))
+        if not os.path.exists(job_path):
+            os.makedirs(job_path, exist_ok=True)
+            os.makedirs(os.path.join(job_path, "media"), exist_ok=True)
+            os.makedirs(os.path.join(job_path, "uploaded"), exist_ok=True) 
+            os.makedirs(os.path.join(job_path, "failed"), exist_ok=True)
         
         # Initialize job state
         job_state = JobState(
@@ -220,15 +258,46 @@ class JobManager:
         return job_id
         
     def _save_job_state(self, job_path: str, state: JobState) -> None:
-        """Save the job state to disk"""
+        """Save the job state to disk with backup on failure"""
+        state_file = os.path.join(job_path, "job_state.json")
+        temp_file = os.path.join(job_path, "job_state.json.tmp")
+        backup_file = os.path.join(job_path, "job_state.json.bak")
+        
         try:
-            state_file = os.path.join(job_path, "job_state.json")
+            # First validate the state object can be serialized
+            state_dict = state.to_dict()
+            try:
+                # Test that we can round-trip through JSON
+                test_state = JobState.from_dict(json.loads(json.dumps(state_dict)))
+            except Exception as e:
+                logger.error(f"Invalid job state data: {str(e)}")
+                raise
+            
+            # Write to temp file only after validation
             os.makedirs(os.path.dirname(state_file), exist_ok=True)
-            with open(state_file, "w") as f:
-                json.dump(state.to_dict(), f, indent=4)
+            with open(temp_file, "w") as f:
+                json.dump(state_dict, f, indent=4)
                 
+            # If temp write successful, backup existing state if present
+            if os.path.exists(state_file):
+                try:
+                    os.replace(state_file, backup_file)
+                except Exception as e:
+                    logger.warning(f"Failed to create backup state file: {str(e)}")
+                    
+            # Move temp to actual state file
+            os.replace(temp_file, state_file)
+            
         except Exception as e:
             logger.error(f"Failed to save state file {state_file}: {str(e)}")
+            if os.path.exists(backup_file):
+                try:
+                    # Restore from backup if save failed
+                    os.replace(backup_file, state_file)
+                    logger.info("Restored state file from backup")
+                    return
+                except Exception as restore_error:
+                    logger.error(f"Failed to restore from backup: {str(restore_error)}")
             raise
             
     def _load_job_state(self, job_path: str) -> Optional[JobState]:
@@ -253,20 +322,66 @@ class JobManager:
             logger.error(f"Failed to load state file {state_file}: {str(e)}")
             return None
             
-    def get_job_state(self, job_id: str) -> Optional[JobState]:
-        """Get the current state of a job"""
-        if job_id in self._active_jobs:
-            return self._active_jobs[job_id]
+    def validate_job_directory(self, job_id: str, repair: bool = True) -> bool:
+        """
+        Validate that a job directory has the expected structure.
+        If repair=True, try to fix common issues like missing directories.
+        """
+        if job_id == "jobs":
+            return False
             
-        # Try to load from disk if not in memory
-        try:
-            job_path = os.path.join(self.base_path, "jobs", job_id)
-            return self._load_job_state(job_path)
-        except Exception as e:
-            logger.error(f"Failed to load state for job {job_id}: {str(e)}")
-            
-        return None
+        job_path = os.path.join(self.base_path, "jobs", job_id)
+        if not os.path.isdir(job_path):
+            return False
         
+        # Check for job state file
+        state_file = os.path.join(job_path, "job_state.json")
+        if not os.path.exists(state_file):
+            logger.error(f"No state file found for job {job_id}")
+            return False
+            
+        # Validate state file contents
+        try:
+            with open(state_file, 'r') as f:
+                state_data = json.load(f)
+            JobState.from_dict(state_data)
+        except Exception as e:
+            logger.error(f"Invalid state file for job {job_id}: {str(e)}")
+            return False
+            
+        # Check for required directories
+        required_dirs = ["media", "uploaded", "failed"]
+        missing_dirs = [d for d in required_dirs 
+                       if not os.path.isdir(os.path.join(job_path, d))]
+                       
+        if missing_dirs:
+            if repair:
+                # Create missing directories
+                for dirname in missing_dirs:
+                    os.makedirs(os.path.join(job_path, dirname), exist_ok=True)
+                logger.info(f"Created missing directories for job {job_id}: {missing_dirs}")
+            else:
+                logger.error(f"Missing required directories for job {job_id}: {missing_dirs}")
+                return False
+                
+        return True
+            
+    def get_job_state(self, job_id: str) -> Optional[JobState]:
+        """Get the state of a specific job"""
+        if not self.validate_job_directory(job_id):
+            return None
+            
+        state_file = os.path.join(self.base_path, "jobs", job_id, "job_state.json")
+        try:
+            with open(state_file, 'r') as f:
+                state_data = json.load(f)
+            return JobState.from_dict(state_data)
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            logger.error(f"Error reading job state for {job_id}: {str(e)}")
+            return None
+            
     def update_job_heartbeat(
         self,
         job_id: str,

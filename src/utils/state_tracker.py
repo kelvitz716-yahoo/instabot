@@ -22,8 +22,21 @@ class StateTracker:
         self.job_manager = job_manager or service_manager.get(JobManager)
         service_manager.register(StateTracker, self)
         
+    def is_valid_job(self, job_id: str) -> bool:
+        """Check if a job ID represents a valid job with state"""
+        if job_id == "jobs":  # Skip the jobs subdirectory
+            return False
+        job_path = os.path.join(JOB_BASE_DIR, "jobs", job_id)
+        if not os.path.isdir(job_path):
+            return False
+        state_file = os.path.join(job_path, "job_state.json")
+        return os.path.exists(state_file)
+
     def get_job_files(self, job_id: str) -> List[str]:
         """Get list of all files for a job"""
+        if not self.is_valid_job(job_id):
+            return []
+            
         job_state = self.job_manager.get_job_state(job_id)
         if not job_state:
             return []
@@ -91,6 +104,18 @@ class StateTracker:
         except Exception as e:
             logger.error(f"Failed to record download state for {filename}: {str(e)}")
             raise
+            
+    def list_jobs(self) -> List[str]:
+        """List all valid jobs with job state files"""
+        jobs_dir = os.path.join(JOB_BASE_DIR, "jobs")
+        if not os.path.exists(jobs_dir):
+            os.makedirs(jobs_dir)
+            
+        job_dirs = [d for d in os.listdir(jobs_dir) 
+                   if os.path.isdir(os.path.join(jobs_dir, d))]
+                   
+        valid_jobs = [job for job in job_dirs if self.is_valid_job(job)]
+        return sorted(valid_jobs)
             
     def prepare_for_upload(self, job_id: str) -> List[str]:
         """
@@ -182,12 +207,14 @@ class StateTracker:
         except Exception as e:
             logger.error(f"Error finalizing job {job_id}: {str(e)}")
             
-    def get_job_summary(self, job_id: str) -> Dict[str, Any]:
+    def get_job_summary(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Get a summary of the job's current state"""
         try:
             state = self.job_manager.get_job_state(job_id)
             if not state:
-                raise ValueError(f"No state found for job {job_id}")
+                # Don't raise an error, just return None for non-existent jobs
+                logger.error(f"No state found for job {job_id}")
+                return None
                 
             uploaded = sum(1 for f in state.files.values() if f.status == FileStatus.UPLOADED)
             failed = sum(1 for f in state.files.values() if f.status == FileStatus.FAILED)
